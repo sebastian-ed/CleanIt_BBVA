@@ -4,3 +4,5 @@
 #rows td input[data-f=verified]{width:auto;min-height:auto;vertical-align:middle}#rows td input[data-f=valor]{min-width:105px}#rows td{white-space:nowrap}#rows td input[data-f=patente]{min-width:100px}#rows td input[data-f=cochera]{min-width:75px}
 
 #opHistory{white-space:pre-line}.editActions{margin-top:16px;padding:12px 0}.editActions button{min-height:45px}#draftNotice{font-size:13px;color:#4a6b78}#rows td[data-applied]{font-variant-numeric:tabular-nums}#rows td:last-child button{min-width:65px}#actions>button{margin:4px 2px}
+
+#saveStatus:not(:empty){padding:12px;border-radius:8px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere}.saveOk{background:#e6f5ee;color:#155b3b}.saveError{background:#fff0f0;color:#a51e29}
