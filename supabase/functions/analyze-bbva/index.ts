@@ -8,8 +8,9 @@ Deno.serve(async req=>{
  const url=Deno.env.get('SUPABASE_URL')!, key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
  admin=createClient(url,key);const token=req.headers.get('Authorization')?.replace(/^Bearer /i,'')||'';
  const {data:{user}}=await admin.auth.getUser(token);if(!user)return reply({error:'No autorizado'},401);
- const {data:role}=await admin.from('bbva_roles').select('role').eq('user_id',user.id).maybeSingle();if(!role)return reply({error:'Sin rol'},403);
+ const {data:assigned}=await admin.from('bbva_roles').select('role').eq('user_id',user.id).maybeSingle();const role=assigned|| (user.is_anonymous?{role:'upload_only'}:null);if(!role)return reply({error:'Sin rol'},403);
  const {day,photoId,action,model,models:requested,rows:ocrRows}=await req.json();
+ if(role.role!=='supervisor'&&action!=='save_ocr')return reply({error:'Solo carga OCR permitida'},403);
  if(action==='models'||action==='test'){
  if(role.role!=='supervisor')return reply({error:'Sin permiso'},403);
  const api=Deno.env.get('GEMINI_API_KEY');if(!api)throw Error('Falta GEMINI_API_KEY');
@@ -21,7 +22,7 @@ Deno.serve(async req=>{
  return reply(action==='models'?{models:(j.models||[]).filter((m:any)=>m.supportedGenerationMethods?.includes('generateContent')&&valid(m.name?.replace(/^models\//,''))).map((m:any)=>m.name.replace(/^models\//,'')),more:!!j.nextPageToken}:{ok:true,model});
  }
  if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return reply({error:'Fecha inválida'},400);
- const {data:photos,error:pe}=await admin.from('bbva_photos').select('*').eq('day',day).order('created_at',{ascending:false});if(pe)throw pe;
+ const {data:photos,error:pe}=await admin.from('bbva_photos').select('*').eq('day',day).order('created_at',{ascending:false}).order('id',{ascending:false});if(pe)throw pe;
  const close=photos.find(p=>p.moment==='cierre');if(!close)return reply({error:'Falta cierre'},400);
  if(role.role!=='supervisor'&&(close.owner!==user.id||close.id!==photoId))return reply({error:'Sin permiso'},403);
  const {data:old}=await admin.from('bbva_days').select('*').eq('day',day).maybeSingle();if(old?.reviewed&&role.role!=='supervisor')return reply({error:'Día confirmado; supervisor debe revisarlo'},409);
@@ -30,9 +31,8 @@ Deno.serve(async req=>{
  if(old?.reviewed)return reply({error:'Día confirmado; requiere revisión del supervisor'},409);
  if(!Array.isArray(ocrRows)||!ocrRows.length||ocrRows.length>500)return reply({error:'Sin filas OCR válidas'},400);
  const rows=ocrRows.map((r:any)=>({patente:String(r.patente||'').toUpperCase().replace(/[^A-Z0-9?]/g,'').slice(0,20),cochera:String(r.cochera||'').slice(0,20),tipo:['PARTICULAR','ABONADO'].includes(r.tipo)?r.tipo:'',realizado:['SI','NO'].includes(r.realizado)?r.realizado:'',valor:typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0?r.valor:null,duda:true}));
- const {data:latest}=await admin.from('bbva_photos').select('id').eq('day',day).eq('moment','cierre').order('created_at',{ascending:false}).limit(1).single();if(latest?.id!==close.id)return reply({error:'Hay un cierre más reciente'},409);
- const {error}=await admin.from('bbva_days').upsert({day,rows,price:old?.price??14656,reviewed:false,warnings:'OCR automático: verificar TODAS las filas, posibles omisiones, valores y estados contra la foto. Los totales son provisorios.',photo_id:close.id,updated_at:new Date().toISOString()});if(error)throw error;
- await admin.from('bbva_photos').update({status:'leida'}).eq('id',close.id);return reply({ok:true,rows:rows.length});
+ const {data:latest}=await admin.from('bbva_photos').select('id').eq('day',day).eq('moment','cierre').order('created_at',{ascending:false}).order('id',{ascending:false}).limit(1).single();if(latest?.id!==close.id)return reply({error:'Hay un cierre más reciente'},409);
+ const {error}=await admin.rpc('bbva_save_ocr_v6',{p_day:day,p_photo:close.id,p_rows:rows});if(error)throw error;return reply({ok:true,rows:rows.length});
  }
  activeId=close.id;
  await admin.from('bbva_photos').update({status:'procesando'}).eq('id',close.id);
@@ -62,7 +62,7 @@ Deno.serve(async req=>{
  if(!parsed)throw new Error(failures.join(' | ')||'Gemini no respondió');
  if(!Array.isArray(parsed?.rows)||!parsed.rows.length)throw new Error(last||'Sin filas legibles; revisar manualmente');
  const rows=parsed.rows.map((r:any)=>({patente:String(r.patente||'').toUpperCase().replace(/[^A-Z0-9]/g,''),cochera:String(r.cochera||''),tipo:['PARTICULAR','ABONADO'].includes(r.tipo)?r.tipo:'',realizado:['SI','NO'].includes(r.realizado)?r.realizado:'',valor:typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0?r.valor:null,duda:!!r.duda}));
- const {data:latest}=await admin.from('bbva_photos').select('id').eq('day',day).eq('moment','cierre').order('created_at',{ascending:false}).limit(1).single();if(latest?.id!==close.id)return reply({error:'Hay un cierre más reciente; reprocesar'},409);
+ const {data:latest}=await admin.from('bbva_photos').select('id').eq('day',day).eq('moment','cierre').order('created_at',{ascending:false}).order('id',{ascending:false}).limit(1).single();if(latest?.id!==close.id)return reply({error:'Hay un cierre más reciente; reprocesar'},409);
  const {error}=await admin.from('bbva_days').upsert({day,rows,price:old?.price??14656,reviewed:false,warnings:`Modelo: ${usedModel}\n${String(parsed.warnings||'')}`,photo_id:close.id,updated_at:new Date().toISOString()});if(error)throw error;await admin.from('bbva_photos').update({status:'leida'}).eq('id',close.id);return reply({ok:true,rows:rows.length,model:usedModel});
  }catch(e){const error=String(e instanceof Error?e.message:(e as any)?.message||e);if(activeId&&admin)await admin.from('bbva_photos').update({status:'error_ia'}).eq('id',activeId);return reply({error},500)}
 });
