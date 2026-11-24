@@ -9,7 +9,18 @@ Deno.serve(async req=>{
  admin=createClient(url,key);const token=req.headers.get('Authorization')?.replace(/^Bearer /i,'')||'';
  const {data:{user}}=await admin.auth.getUser(token);if(!user)return reply({error:'No autorizado'},401);
  const {data:role}=await admin.from('bbva_roles').select('role').eq('user_id',user.id).maybeSingle();if(!role)return reply({error:'Sin rol'},403);
- const {day,photoId}=await req.json();if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return reply({error:'Fecha inválida'},400);
+ const {day,photoId,action,model,models:requested}=await req.json();
+ if(action==='models'||action==='test'){
+ if(role.role!=='supervisor')return reply({error:'Sin permiso'},403);
+ const api=Deno.env.get('GEMINI_API_KEY');if(!api)throw Error('Falta GEMINI_API_KEY');
+ const valid=(v:unknown)=>typeof v==='string'&&/^gemini-[a-zA-Z0-9.-]+$/.test(v);
+ if(action==='test'&&!valid(model))return reply({error:'Modelo inválido'},400);
+ const endpoint=action==='models'?'models?pageSize=100':`models/${encodeURIComponent(model)}:generateContent`;
+ const r=await fetch('https://generativelanguage.googleapis.com/v1beta/'+endpoint,{method:action==='models'?'GET':'POST',headers:{'x-goog-api-key':api,'Content-Type':'application/json'},...(action==='test'?{body:JSON.stringify({contents:[{parts:[{text:'Responde OK'}]}]})}:{})});
+ const j=await r.json();if(!r.ok)return reply({error:`Gemini ${r.status}: ${String(j.error?.message||'').split(api).join('[oculto]')}`},400);
+ return reply(action==='models'?{models:(j.models||[]).filter((m:any)=>m.supportedGenerationMethods?.includes('generateContent')&&valid(m.name?.replace(/^models\//,''))).map((m:any)=>m.name.replace(/^models\//,'')),more:!!j.nextPageToken}:{ok:true,model});
+ }
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return reply({error:'Fecha inválida'},400);
  const {data:photos,error:pe}=await admin.from('bbva_photos').select('*').eq('day',day).order('created_at',{ascending:false});if(pe)throw pe;
  const close=photos.find(p=>p.moment==='cierre');if(!close)return reply({error:'Falta cierre'},400);
  if(role.role!=='supervisor'&&(close.owner!==user.id||close.id!==photoId))return reply({error:'Sin permiso'},403);
@@ -23,7 +34,8 @@ Deno.serve(async req=>{
  const bytes=new Uint8Array(await data.arrayBuffer());let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode(...bytes.subarray(i,i+8192));parts.push({text:p.moment.toUpperCase()},{inline_data:{mime_type:data.type||'image/jpeg',data:btoa(s)}});
  }
  let parsed:any;let last='';let usedModel='';
- const models=[...new Set([Deno.env.get('GEMINI_MODEL')||'gemini-3.8-flash',Deno.env.get('GEMINI_FALLBACK_MODEL')||'gemini-3.5-flash-lite','gemini-3.8-flash','gemini-3.5-flash-lite'].map(x=>x.trim().replace(/^models\//,'')).filter(Boolean))];
+ const choices=role.role==='supervisor'&&Array.isArray(requested)?requested.filter((x:unknown)=>typeof x==='string'&&/^gemini-[a-zA-Z0-9.-]+$/.test(x)).slice(0,2):[];
+ const models=[...new Set((choices.length?choices:[Deno.env.get('GEMINI_MODEL')||'gemini-3.8-flash',Deno.env.get('GEMINI_FALLBACK_MODEL')||'gemini-3.5-flash-lite']).map(x=>x.trim().replace(/^models\//,'')).filter(Boolean))];
  const failures:string[]=[];
  for(const model of models){
    for(let i=0;i<2;i++){
