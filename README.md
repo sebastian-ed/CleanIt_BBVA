@@ -18,3 +18,11 @@ Foto de inicio y foto de cierre por fecha. Se usa la última foto de cada moment
 - Reintentos por errores transitorios y modelo alternativo opcional. No elimina saturación del proveedor. Las llamadas pueden alcanzar límites de tiempo de Edge Functions.
 - No se ha desplegado ni probado con credenciales reales; verificar RLS, login, Storage y lectura con planillas de prueba sin datos personales antes de producción. Confirmar autorización de BBVA para procesar fotos con Gemini y limitar datos visibles a los necesarios.
 - No borrar datos históricos ni cambiar la tarifa sin revisar el contrato. Los totales incluyen lecturas pendientes de confirmar y se muestran como provisionales.
+
+## Actualizar desde V2 (sin borrar datos)
+Conservar tu config.js real. Reemplazar index.html, style.css, app.js y supabase/functions/analyze-bbva/index.ts. No volver a ejecutar schema.sql. En PowerShell, dentro de la carpeta actualizada y con la cuenta correcta:
+
+    npx supabase@latest secrets set GEMINI_MODEL=gemini-3.8-flash GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite --project-ref uzzbvirtxgqxwyxtmxal
+    npx supabase@latest functions deploy analyze-bbva --no-verify-jwt --project-ref uzzbvirtxgqxwyxtmxal
+
+Confirmar el project ref contra tu dashboard antes de ejecutar. No cambiar GEMINI_API_KEY si ya está configurada. Publicar los tres archivos frontend actualizados en GitHub Pages, recargar Ctrl+F5 y entrar como supervisor. Seleccionar fecha y reprocesar la foto existente. Los modelos pueden estar restringidos por cuenta o cuota: la función muestra modelo y error detallado, y prueba alternativas. No se probó contra tu instancia real. El backup Drive/Sheets sigue pendiente. Fotos en Storage > bbva-photos, filas JSON en bbva_days, metadatos en bbva_photos. Se conserva una foto completa por momento como fuente vigente.
