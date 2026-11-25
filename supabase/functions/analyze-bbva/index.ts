@@ -8,6 +8,8 @@ Deno.serve(async req=>{
  const url=Deno.env.get('SUPABASE_URL')!, key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
  admin=createClient(url,key);const token=req.headers.get('Authorization')?.replace(/^Bearer /i,'')||'';
  const {data:{user}}=await admin.auth.getUser(token);if(!user)return reply({error:'No autorizado'},401);
+ // Atribución de auditoría: identidad verificada por Auth, nunca por el cuerpo del cliente.
+ admin=createClient(url,key,{global:{headers:{'x-bbva-actor':user.id,'x-bbva-email':user.email||'','x-bbva-device':(req.headers.get('user-agent')||'').slice(0,500)}}});
  const {data:assigned}=await admin.from('bbva_roles').select('role').eq('user_id',user.id).maybeSingle();const role=assigned|| (user.is_anonymous?{role:'upload_only'}:null);if(!role)return reply({error:'Sin rol'},403);
  const {day,photoId,action,model,models:requested,rows:ocrRows}=await req.json();
  if(role.role!=='supervisor'&&action!=='save_ocr')return reply({error:'Solo carga OCR permitida'},403);
